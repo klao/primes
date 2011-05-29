@@ -54,13 +54,18 @@ wheelSieve k = reverse ps ++ map head (sieve p (cycle ns))
 -- |
 -- Checks whether a given number is prime.
 -- 
--- This function uses trial division to check for divisibility with
--- all primes below the square root of the given number. It is
--- impractical for numbers with a very large smallest prime factor.
--- 
+-- For "small" numbers this function uses trial division with primes
+-- up to the square root of @n@.
+--
+-- For large numbers it checks if @n@ is divisible by the first couple
+-- of primes and then performs a Rabin--Miller primality test.
+--
+-- The cutoff was determined by simple experimentation with average
+-- running time of the test.
 isPrime :: Integral int => int -> Bool
-isPrime n | n > 1     = primeFactors n == [n]
-          | otherwise = False
+isPrime n | n < 2 = False
+          | n < 300000000 = hasNoPrimeFactor n $ wheelSieve 6
+          | otherwise = hasNoPrimeFactor n primesTo100 && isRabinMillerPrime n
 
 {-# SPECIALISE isPrime :: Int     -> Bool #-}
 {-# SPECIALISE isPrime :: Integer -> Bool #-}
@@ -248,3 +253,67 @@ mergeAll (x:y:qs) = merge (merge x y) (mergeAll qs)
 
 {-# SPECIALISE mergeAll :: [Queue Int]     -> Queue Int     #-}
 {-# SPECIALISE mergeAll :: [Queue Integer] -> Queue Integer #-}
+
+-- Primality testing.
+------------------------------------------------------------------------------
+
+-- Performs one step of the Rabin--Miller primality test.
+--
+-- testRabinMiller n (s, d) a returns:
+-- False, meaning that a is a witness for the compositeness of n, or
+-- True, meaning that n is a strong pseudo-prime for base a.
+testRabinMiller :: Integral int
+                => int          -- ^ n: the tested number
+                -> (int, int)   -- ^ (s,d): such as 2^s*d == (n-1) and d is odd
+                -> int          -- ^ a: base to be tested
+                -> Bool
+testRabinMiller n (s, d) a
+    | b == 1 || b == n' = True
+    | otherwise = not $ all (/= n') bs
+    where
+      n' = n - 1
+      b = fastPow (\x y -> x*y `mod` n) a d
+      bs = tail $ take (fromIntegral s) $ iterate (\x -> x*x `mod` n) b
+
+-- Basic iterated squares exponentiation.
+fastPow :: Integral i => (a -> a -> a) -> a -> i -> a
+fastPow _ x 1 = x
+fastPow (*) x k | r == 0 = xSquaredToK'
+                | r == 1 = x * xSquaredToK'
+    where
+      (k', r) = quotRem k 2
+      xSq = x * x
+      xSquaredToK' = xSq `seq` fastPow (*) xSq k'
+
+primesTo100 :: Integral int => [int]
+primesTo100 = [2,3,5,7,11,13,17,19,23,29,31,37,41,43,47,53,59,61,67,71,73,79,83,89,97]
+
+-- Rabin--Miller primality test.
+--
+-- We avoid dealing with generating random numbers we use a fixed set
+-- of possible witnesses: the first 25 primes. (And though it is
+-- proven that this cannot be enough for _all_ numbers, this should be
+-- enough for numbers of imaginable size.)
+--
+-- For small numbers the simple trial division test is more efficient.
+isRabinMillerPrime :: Integral int => int -> Bool
+isRabinMillerPrime n
+    | n <= 100 = n `elem` primesTo100
+    | even n = False
+    | otherwise = all (testRabinMiller n (s,d)) primesTo100
+    where
+      (s,d) = takeOut2s (n-1) 0
+      
+      takeOut2s d s | odd d = (s,d)
+                    | otherwise = takeOut2s (d `quot` 2) $! s+1
+
+-- 'hasNoPrimeFactor n ps' is True iff n is has no non-trival prime
+-- divisor from the given list (ie. n itself can be a prime on the list).
+--
+-- Requirements: n is a positive integer, ps is a list of primes in
+-- _increasing_ order.
+hasNoPrimeFactor :: Integral int => int -> [int] -> Bool
+hasNoPrimeFactor _ [] = True
+hasNoPrimeFactor n (p:ps) | p*p > n = True
+                          | n `rem` p == 0 = False
+                          | otherwise = hasNoPrimeFactor n ps
