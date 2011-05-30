@@ -14,6 +14,9 @@
 -- /The Genuine Sieve of Eratosthenes/ by Melissa O'Neil
 -- (<http://www.cs.hmc.edu/~oneill/papers/Sieve-JFP.pdf>).
 -- 
+
+{-# LANGUAGE BangPatterns #-}
+
 module Data.Numbers.Primes (
 
   primes, wheelSieve,
@@ -67,7 +70,8 @@ wheelSieve k = reverse ps ++ map head (sieve p (cycle ns))
 isPrime :: Integral int => int -> Bool
 isPrime n | n < 2 = False
           | n < 300000000 = hasNoPrimeFactor n $ wheelSieve 6
-          | otherwise = hasNoPrimeFactor n primesTo100 && isRabinMillerPrime n
+          | otherwise = hasNoPrimeFactor n (take 20 primes)
+                        && isRabinMillerProbablePrime n
 
 {-# SPECIALISE isPrime :: Int     -> Bool #-}
 {-# SPECIALISE isPrime :: Integer -> Bool #-}
@@ -272,7 +276,7 @@ testRabinMiller :: Integral int
                 -> Bool
 testRabinMiller n (s, d) a
     | b == 1 || b == n' = True
-    | otherwise = not $ all (/= n') bs
+    | otherwise = any (n'==) bs
     where
       n' = n - 1
       b = fastPow (\x y -> x*y `mod` n) a d
@@ -280,16 +284,9 @@ testRabinMiller n (s, d) a
 
 -- Basic iterated squares exponentiation.
 fastPow :: Integral i => (a -> a -> a) -> a -> i -> a
-fastPow _ x 1 = x
-fastPow (*) x k | r == 0 = xSquaredToK'
-                | r == 1 = x * xSquaredToK'
-    where
-      (k', r) = quotRem k 2
-      xSq = x * x
-      xSquaredToK' = xSq `seq` fastPow (*) xSq k'
-
-primesTo100 :: Integral int => [int]
-primesTo100 = [2,3,5,7,11,13,17,19,23,29,31,37,41,43,47,53,59,61,67,71,73,79,83,89,97]
+fastPow (*) !x 1 = x
+fastPow (*) !x k | even k = fastPow (*) (x*x) (k `div` 2)
+                 | otherwise = x * fastPow (*) (x*x) (k `div` 2)
 
 -- Rabin--Miller primality test.
 --
@@ -299,8 +296,8 @@ primesTo100 = [2,3,5,7,11,13,17,19,23,29,31,37,41,43,47,53,59,61,67,71,73,79,83,
 -- enough for numbers of imaginable size.)
 --
 -- For small numbers the simple trial division test is more efficient.
-isRabinMillerPrime :: Integral int => int -> Bool
-isRabinMillerPrime n
+isRabinMillerProbablePrime :: Integral int => int -> Bool
+isRabinMillerProbablePrime n
     | n <= 100 = n `elem` primesTo100
     | even n = False
     | otherwise = all (testRabinMiller n (s,d)) primesTo100
@@ -309,6 +306,8 @@ isRabinMillerPrime n
       
       takeOut2s d s | odd d = (s,d)
                     | otherwise = takeOut2s (d `quot` 2) $! s+1
+
+      primesTo100 = takeWhile (<100) primes
 
 -- 'hasNoPrimeFactor n ps' is True iff n is has no non-trival prime
 -- divisor from the given list (ie. n itself can be a prime on the list).
@@ -355,7 +354,7 @@ primeFactorsPollardRho :: Integral int => int -> [int]
 primeFactorsPollardRho n | n < 2 = []
                          | otherwise = pf n []
     where
-      pf n | isRabinMillerPrime n = (n:)
+      pf n | isRabinMillerProbablePrime n = (n:)
            | otherwise = pf d . pf (n `quot` d)
            where
              d = ff n 1
